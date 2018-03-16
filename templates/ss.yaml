@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "{{.Values.natsStreaming.service.name | trunc 18 }}-config"
+  namespace: {{.Release.Namespace}}
+  labels:
+    heritage: {{.Release.Service | quote }}
+    chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+    release: {{.Release.Name | quote }}
+  annotations:
+    "helm.sh/created": {{.Release.Time.Seconds | quote }}
+type: Opaque
+data:
+  nats.conf: {{ b64enc .Values.natsStreaming.secrets.natsConf | quote}}
+---
+apiVersion: apps/v1beta2
+kind: StatefulSet
+metadata:
+  labels:
+    app: {{ template "name" . }}
+    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    release: {{ .Release.Name }}
+  name: {{ .Chart.Name }}
+spec:
+  serviceName:  {{ template "name" . }}
+  replicas: {{ .Values.natsStreaming.replicas }}
+  selector:
+    matchLabels:
+      app:  {{ template "name" . }}
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app:  {{ template "name" . }}
+        release: {{ .Release.Name }}
+    spec:
+      containers:
+      - name: nats-streaming
+        image: {{ .Values.natsStreaming.image }}
+        imagePullSecrets:
+        - name: docker-config
+        imagePullPolicy: {{ .Values.natsStreaming.imagePullPolicy }}
+        args:
+          # - /opt/nats-streaming-server
+          - --user={{ .Values.natsStreaming.secrets.username }}
+          - --pass={{ .Values.natsStreaming.secrets.password }}
+          - --config=/etc/nats/nats.conf
+          - -m=8222
+          - -st=FILE
+          - --dir=/{{ .Values.natsStreaming.pv.volumeName }}
+          - -ft_group={{.Values.natsStreaming.settings.ftGroup}}
+          - --cluster=nats://0.0.0.0:6222
+          - --routes=nats://{{ template "name" . }}:6222
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: {{ .Values.natsStreaming.pv.volumeName }}
+          mountPath: /{{ .Values.natsStreaming.pv.volumeName }}
+        - name: config-volume
+          mountPath: /etc/nats
+      volumes:
+      - name: {{ .Values.natsStreaming.pv.volumeName }}
+        persistentVolumeClaim:
+          claimName: {{ .Values.natsStreaming.pv.volumeName }}
+      - name: config-volume
+        secret:
+          secretName: "{{.Values.natsStreaming.service.name | trunc 18 }}-config"
